@@ -106,6 +106,74 @@
   )
 )
 
+;; Calculate number of blocks elapsed since start
+(define-read-only (calculate-block-delta (timeframe (tuple (start-block uint) (stop-block uint))))
+  (let (
+    (start-block (get start-block timeframe))
+    (stop-block (get stop-block timeframe))
+  )
+    (if (<= burn-block-height start-block)
+      u0
+      (if (< burn-block-height stop-block)
+        (- burn-block-height start-block)
+        (- stop-block start-block)
+      )
+    )
+  )
+)
+
+;; Calculate balance available to creator or remaining for subscriber
+(define-read-only (balance-of (subscription-id uint) (who principal))
+  (let (
+    (sub (unwrap! (map-get? subscriptions subscription-id) u0))
+    (block-delta (calculate-block-delta (get timeframe sub)))
+    (earned (* block-delta (get payment-per-block sub)))
+  )
+    (if (is-eq who (get creator sub))
+      (- earned (get withdrawn-balance sub))
+      (if (is-eq who (get subscriber sub))
+        (- (get balance sub) earned)
+        u0
+      )
+    )
+  )
+)
+
+
+;; Creator withdraws available balance
+(define-public (withdraw (subscription-id uint))
+  (let (
+    (sub (unwrap! (map-get? subscriptions subscription-id) ERR_INVALID_SUBSCRIPTION))
+    (balance (balance-of subscription-id contract-caller))
+  )
+    (asserts! (is-eq contract-caller (get creator sub)) ERR_UNAUTHORIZED)
+    (map-set subscriptions subscription-id
+      (merge sub { withdrawn-balance: (+ (get withdrawn-balance sub) balance) })
+    )
+    (try! (as-contract (stx-transfer? balance tx-sender (get creator sub))))
+    (ok balance)
+  )
+)
+
+;; Cancel a subscription before expiration
+(define-public (cancel-subscription (subscription-id uint))
+  (let (
+    (sub (unwrap! (map-get? subscriptions subscription-id) ERR_INVALID_SUBSCRIPTION))
+    (subscriber (get subscriber sub))
+  )
+    (asserts! (is-eq contract-caller subscriber) ERR_UNAUTHORIZED)
+    (asserts! (get active sub) ERR_INACTIVE_SUBSCRIPTION)
+
+    ;; compute refundable balance
+    (let ((refund (balance-of subscription-id subscriber)))
+      (map-set subscriptions subscription-id
+        (merge sub { active: false, balance: u0 })
+      )
+      (try! (as-contract (stx-transfer? refund tx-sender subscriber)))
+      (ok refund)
+    )
+  )
+)
 
 ;; read only functions
 ;;
