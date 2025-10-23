@@ -175,6 +175,32 @@
   )
 )
 
+;; Automatically renew if balance remains and auto-renew = true
+(define-public (renew-subscription (subscription-id uint) (extra-duration uint))
+  (let ((sub (unwrap! (map-get? subscriptions subscription-id) ERR_INVALID_SUBSCRIPTION)))
+    (asserts! (is-eq (get subscriber sub) contract-caller) ERR_UNAUTHORIZED)
+    (asserts! (get auto-renew sub) ERR_INACTIVE_SUBSCRIPTION)
+    (map-set subscriptions subscription-id
+      (merge sub {
+        timeframe: (tuple
+          (start-block burn-block-height)
+          (stop-block (+ burn-block-height extra-duration))
+        ),
+        withdrawn-balance: u0,
+        active: true
+      })
+    )
+    (ok true)
+  )
+)
+
+;; View subscription details
+(define-read-only (get-subscription (subscription-id uint))
+  (match (map-get? subscriptions subscription-id)
+    subscription (ok subscription)   
+    (err u404)                      
+  )
+)
 ;; read only functions
 ;;
 
